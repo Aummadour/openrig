@@ -39,6 +39,9 @@ export function buildNativeResumeCommand(
   if (runtime === "codex") {
     return buildCodexResumeCore(resumeToken, codexConfigProfile);
   }
+  if (runtime === "antigravity") {
+    return `agy --dangerously-skip-permissions --mode accept-edits --conversation ${shellQuote(resumeToken)}`;
+  }
   return null;
 }
 
@@ -211,6 +214,35 @@ export function assessNativeResumeProbe(
       status: "inconclusive",
       code: "awaiting_runtime",
       detail: "Codex did not report an explicit failure, but an interactive conversation has not been observed.",
+    };
+  }
+
+  if (runtime === "antigravity") {
+    if (paneContent.includes("No conversation found") || paneContent.includes("conversation not found")) {
+      return {
+        status: "failed",
+        code: "no_conversation_found",
+        detail: "Antigravity reported that the requested conversation does not exist.",
+      };
+    }
+    if (paneContent.includes("Welcome to Antigravity") || paneContent.includes("Type / for commands") || paneCommand.includes("agy")) {
+      return {
+        status: "resumed",
+        code: "active_runtime",
+        detail: "Antigravity is the active foreground process in the probe pane.",
+      };
+    }
+    if (SHELL_COMMANDS.has(paneCommand)) {
+      return {
+        status: "failed",
+        code: "returned_to_shell",
+        detail: "The probe pane returned to a shell instead of staying inside the runtime.",
+      };
+    }
+    return {
+      status: "inconclusive",
+      code: "awaiting_runtime",
+      detail: "Antigravity did not report an explicit failure, but it is not yet active in the pane.",
     };
   }
 
