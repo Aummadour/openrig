@@ -468,6 +468,29 @@ describe("native resume probe", () => {
     });
   });
 
+  it.each(["codex", "sh"])("classifies a resumed Codex 0.157 TUI with a mixed-case model footer as resumed (pane %s)", (paneCommand) => {
+    expect(
+      assessNativeResumeProbe({
+        runtime: "codex",
+        paneCommand,
+        paneContent: [
+          "• Ran echo SHELL-CX-5K2",
+          "  └ SHELL-CX-5K2",
+          "• SHELL-CX-5K2; SKILL-TOKEN-Q7R2; NONCE-CX-8H3",
+          "",
+          "› Ask Codex to do anything",
+          "",
+          "  GPT-5.6-Luna max · ~/project · Recovery",
+          "  ? for shortcuts                                     ⚠ 2 warnings · f2 to view",
+        ].join("\n"),
+      })
+    ).toEqual({
+      status: "resumed",
+      code: "active_runtime",
+      detail: "Codex is running with an active interactive TUI in the probe pane.",
+    });
+  });
+
   it("keeps a foreground Codex process without a native prompt unverified", () => {
     expect(
       assessNativeResumeProbe({

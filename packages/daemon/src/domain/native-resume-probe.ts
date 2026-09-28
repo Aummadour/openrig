@@ -303,7 +303,8 @@ function looksLikeCodexTui(paneContent: string): boolean {
     const hasPrompt = text.startsWith("›") || text.startsWith("»");
     return hasPrompt && !/^\d+\.\s/.test(text.slice(1).trimStart());
   });
-  const hasModelFooter = /(^|\n)\s{2,}gpt-[^\n]+ · [^\n]+(?:\n|$)/.test(recentLines);
+  // codex-cli 0.157 and 0.158 print the model in mixed case, e.g. "GPT-5.6-Luna max · <cwd> · <title>".
+  const hasModelFooter = /(^|\n)\s{2,}gpt-[^\n]+ · [^\n]+(?:\n|$)/i.test(recentLines);
   return hasPromptLine && (current.includes("OpenAI Codex (v") || hasModelFooter);
 }
 
