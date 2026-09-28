@@ -327,7 +327,8 @@ function looksLikeCodexTui(paneContent: string): boolean {
     const text = line.trimStart();
     return text.startsWith("›") && !/^\d+\.\s/.test(text.slice(1).trimStart());
   });
-  const hasModelFooter = /(^|\n)\s{2,}gpt-[^\n]+ · [^\n]+(?:\n|$)/.test(recentLines);
+  // codex-cli 0.157 prints the footer model as "GPT-5.6-Luna max · <cwd>".
+  const hasModelFooter = /(^|\n)\s{2,}gpt-[^\n]+ · [^\n]+(?:\n|$)/i.test(recentLines);
   return hasPromptLine && (current.includes("OpenAI Codex (v") || hasModelFooter);
 }
 
