@@ -7,8 +7,9 @@
 // - `--conversation <id>` with a known id logs `Resuming conversation <id>`.
 //   An unknown id logs `Conversation <id> not found, ignoring --conversation
 //   flag` and silently starts a fresh session.
-// - An unknown `--model` logs `failed to apply model override` and silently
-//   falls back to the default model.
+// - An unknown `--model` logs `Failed to resolve model flag <m>` and silently
+//   falls back to the default model; a valid one logs `Propagating selected
+//   model override to backend: label="<label>"`.
 // - An untrusted folder shows a trust dialog even with
 //   --dangerously-skip-permissions.
 // - agy has no data-dir override; every launch shares
@@ -83,21 +84,27 @@ export interface AgyLogFacts {
   missing: string | null;
   /** Model agy refused (it then fell back to its default model). */
   rejectedModel: string | null;
+  /** Display label of the model agy applied for this launch. */
+  appliedModelLabel: string | null;
 }
 
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 const CREATED_RE = new RegExp(`\\] Created conversation (${UUID})`);
 const RESUMED_RE = new RegExp(`\\] Resuming conversation (${UUID})`);
 const MISSING_RE = new RegExp(`\\] Conversation (\\S+) not found, ignoring --conversation flag`);
-const REJECTED_MODEL_RE = /\] failed to apply model override: .*model (\S+) is not recognized/;
+// The early "failed to apply model override" line also appears for valid models
+// (before auth loads the model list); only the later resolution lines decide.
+const REJECTED_MODEL_RE = /\] Failed to resolve model flag (\S+?): /;
+const APPLIED_MODEL_RE = /\] Propagating selected model override to backend: label="([^"]+)"/;
 
 export function parseAgyLog(content: string): AgyLogFacts {
-  const facts: AgyLogFacts = { created: null, resumed: null, missing: null, rejectedModel: null };
+  const facts: AgyLogFacts = { created: null, resumed: null, missing: null, rejectedModel: null, appliedModelLabel: null };
   for (const line of content.split("\n")) {
     if (!facts.created) facts.created = CREATED_RE.exec(line)?.[1] ?? null;
     if (!facts.resumed) facts.resumed = RESUMED_RE.exec(line)?.[1] ?? null;
     if (!facts.missing) facts.missing = MISSING_RE.exec(line)?.[1] ?? null;
     if (!facts.rejectedModel) facts.rejectedModel = REJECTED_MODEL_RE.exec(line)?.[1] ?? null;
+    if (!facts.appliedModelLabel) facts.appliedModelLabel = APPLIED_MODEL_RE.exec(line)?.[1] ?? null;
   }
   return facts;
 }

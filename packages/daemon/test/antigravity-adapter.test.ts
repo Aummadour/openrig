@@ -148,7 +148,9 @@ describe("AntigravityRuntimeAdapter", () => {
   const created = (id: string) => `I0928 08:22:34.770786     598 server.go:1239] Created conversation ${id}\n`;
   const resumed = (id: string) => `I0928 08:23:01.100000     534 common.go:401] Resuming conversation ${id}\n`;
   const missing = (id: string) => `W0928 08:24:03.700000      44 projectresolve.go:63] Conversation ${id} not found, ignoring --conversation flag\n`;
-  const rejected = (m: string) => `W0928 08:23:40.000000      12 common.go:335] failed to apply model override: failed to resolve model: model ${m} is not recognized as a known model or custom model in settings\n`;
+  const earlyOverride = (m: string) => `W0928 08:23:40.000000      12 common.go:335] failed to apply model override: failed to resolve model: model ${m} is not recognized as a known model or custom model in settings\n`;
+  const rejected = (m: string) => earlyOverride(m) + `W0928 08:23:41.000000      12 model_config_manager.go:79] Failed to resolve model flag ${m}: model ${m} is not recognized as a known model or custom model in settings\n`;
+  const applied = (m: string, label: string) => earlyOverride(m) + `I0928 08:23:41.000000      12 model_config_manager.go:327] Propagating selected model override to backend: label="${label}"\n`;
 
   function harness(opts: { pane?: string[]; paneCommand?: string[]; log?: (launchId: string) => string | undefined; ids?: string[] } = {}) {
     const fs = mockFs() as AntigravityAdapterFsOps & { _store: Record<string, string> };
@@ -251,6 +253,18 @@ describe("AntigravityRuntimeAdapter", () => {
     const res = await adapter.launchHarness({ ...makeBinding(), model: "no-such-model-x" }, { name: "dev-lead" });
     expect(res.ok).toBe(false);
     expect(res.ok === false && res.error).toContain("no-such-model-x");
+  });
+
+  it("accepts a valid model despite agy's early pre-auth override warning", async () => {
+    const { adapter } = harness({ log: () => applied("gemini-3.8-flash-low", "Gemini 3.8 Flash (Low)") });
+    const res = await adapter.launchHarness({ ...makeBinding(), model: "gemini-3.8-flash-low" }, { name: "dev-lead" });
+    expect(res.ok).toBe(true);
+  });
+
+  it("waits for agy to confirm a requested model before reporting the launch ready", async () => {
+    const { adapter } = harness({ log: () => "" });
+    const res = await adapter.launchHarness({ ...makeBinding(), model: "gemini-3.8-flash-low" }, { name: "dev-lead" });
+    expect(res).toMatchObject({ ok: false, recovery: "attention_required" });
   });
 
   it("answers the folder trust dialog once, then waits for the prompt", async () => {

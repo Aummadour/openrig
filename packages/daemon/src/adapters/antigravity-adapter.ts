@@ -278,7 +278,7 @@ export class AntigravityRuntimeAdapter implements RuntimeAdapter {
         // trust dialog is agy's own record of that choice (first option = trust).
         await this.tmux.sendKeys(session, ["Enter"]);
         trustAnswered = true;
-      } else if (pane.kind === "ready") {
+      } else if (pane.kind === "ready" && (!state.requestedModel || facts.appliedModelLabel)) {
         if (!state.requestedConversation) return { ok: true, appliedLaunch };
         if (facts.resumed === state.requestedConversation) {
           return { ok: true, resumeToken: facts.resumed, resumeType: "antigravity_id", appliedLaunch };
