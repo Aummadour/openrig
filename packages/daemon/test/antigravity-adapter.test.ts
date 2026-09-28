@@ -275,8 +275,8 @@ describe("AntigravityRuntimeAdapter", () => {
     expect((tmux.sendKeys as ReturnType<typeof vi.fn>).mock.calls.filter((c) => c[1][0] === "Enter")).toHaveLength(1);
   });
 
-  it("fails when agy exits during startup", async () => {
-    const { adapter } = harness({ pane: ["", "Error: something\n$ "], paneCommand: ["agy", "bash"] });
+  it("fails when agy exits during startup, but not while the shell is still starting it", async () => {
+    const { adapter } = harness({ pane: ["$ ", "", "Error: something\n$ "], paneCommand: ["bash", "agy", "bash"] });
     const res = await adapter.launchHarness(makeBinding(), { name: "dev-lead" });
     expect(res).toMatchObject({ ok: false, error: "agy exited during startup" });
   });

@@ -241,7 +241,10 @@ export class AntigravityRuntimeAdapter implements RuntimeAdapter {
     const appliedLaunch = { runtime: "antigravity", axis: "permission", state: "observed", value: "bypassPermissions" } as const;
     const attempts = Math.max(1, Math.ceil(this.maxWaitMs / this.pollMs));
     let trustAnswered = false;
+    let sawAgy = false;
     let lastPane = "";
+    // Before the launch script runs, the pane still shows the interactive shell.
+    const shellGraceAttempts = Math.ceil(10_000 / this.pollMs);
 
     for (let attempt = 0; attempt < attempts; attempt++) {
       const facts = this.readLogFacts(state.logFile);
@@ -265,10 +268,11 @@ export class AntigravityRuntimeAdapter implements RuntimeAdapter {
       const paneCommand = await this.tmux.getPaneCommand(session);
       lastPane = (await this.tmux.capturePaneContent(session, 40)) ?? "";
       const pane = classifyAgyPane(lastPane, paneCommand);
-      if (pane.kind === "shell" && attempt > 0) {
+      if (pane.kind !== "shell") sawAgy = true;
+      if (pane.kind === "shell" && (sawAgy || attempt >= shellGraceAttempts)) {
         return {
           ok: false,
-          error: "agy exited during startup",
+          error: sawAgy ? "agy exited during startup" : "agy did not start",
           recovery: "attention_required",
           evidence: lastPane.split("\n").slice(-12).join("\n"),
         };

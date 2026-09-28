@@ -388,7 +388,8 @@ export class TmuxAdapter {
    * be in canonical input mode: on macOS it silently drops input beyond 1024
    * bytes, even when paste-buffer succeeds. Only a short invocation crosses
    * that boundary; the command's PATH, quoting and arguments travel in a file.
-   * The shell removes its private script when consumed (not when pasted).
+   * The shell removes its private script when consumed (not when pasted), then
+ * execs the command (callers pass one simple command).
    * A shell that never consumes the invocation leaves the file for diagnosis.
    */
   async sendShellCommand(target: string, command: string): Promise<TmuxResult> {
@@ -399,7 +400,11 @@ export class TmuxAdapter {
     }
     let created = false;
     try {
-      await this.fileOps.writeFile(path, `/bin/rm -f -- ${shellQuote(path)}\n${command}\n`, { mode: 0o600, flag: "wx" });
+      // `exec` replaces the script's /bin/sh with the runtime. On Linux, tmux
+      // names a pane after its foreground process-group leader; without exec
+      // dash stays the leader and every runtime pane reports "sh", which
+      // readiness and resume checks read as "returned to shell".
+      await this.fileOps.writeFile(path, `/bin/rm -f -- ${shellQuote(path)}\nexec ${command}\n`, { mode: 0o600, flag: "wx" });
       created = true;
       const text = await this.sendText(target, invocation);
       if (!text.ok) return text;

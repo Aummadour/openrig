@@ -25,7 +25,7 @@ describe("shell launch transport", () => {
     const command = `env PATH='${"p".repeat(4096)}' codex -s workspace-write resume 'same-native-id' -m 'chosen-model'`;
     expect(await f.adapter.sendShellCommand("pane", command)).toEqual({ ok: true });
     expect(f.fileOps.writeFile).toHaveBeenNthCalledWith(1, f.scriptPath,
-      `/bin/rm -f -- '/tmp/launch '\"'\"'quoted'\"'\"'.sh'\n${command}\n`, { mode: 0o600, flag: "wx" });
+      `/bin/rm -f -- '/tmp/launch '\"'\"'quoted'\"'\"'.sh'\nexec ${command}\n`, { mode: 0o600, flag: "wx" });
     const invocation = vi.mocked(f.fileOps.writeFile).mock.calls[1]![1];
     expect(Buffer.byteLength(invocation)).toBeLessThan(512);
     expect(invocation).toBe(`/bin/sh '/tmp/launch '\"'\"'quoted'\"'\"'.sh'`);
