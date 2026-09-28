@@ -29,6 +29,7 @@ export interface ResumeRefreshSession {
 }
 
 interface ResumeMetadataRefresherDeps {
+  antigravityConversationReader?: { readConversationId(sessionName: string): string | null } | null;
   sessionRegistry: SessionRegistry;
   tmuxAdapter: TmuxAdapter;
   listProcesses?: () => Array<{ pid: number; ppid: number; command: string }> | Promise<Array<{ pid: number; ppid: number; command: string }>>;
@@ -56,6 +57,7 @@ export class ResumeMetadataRefresher {
   private sleep: (ms: number) => Promise<void>;
   private homeDir: string;
   private contextUsageStore: ResumeMetadataRefresherDeps["contextUsageStore"] | null;
+  private antigravityConversationReader: { readConversationId(sessionName: string): string | null } | null;
 
   constructor(deps: ResumeMetadataRefresherDeps) {
     this.sessionRegistry = deps.sessionRegistry;
@@ -78,6 +80,7 @@ export class ResumeMetadataRefresher {
     this.sleep = deps.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
     this.homeDir = deps.homeDir ?? os.homedir();
     this.contextUsageStore = deps.contextUsageStore ?? null;
+    this.antigravityConversationReader = deps.antigravityConversationReader ?? null;
   }
 
   /**
@@ -142,6 +145,16 @@ export class ResumeMetadataRefresher {
         const threadId = await this.captureCodexThreadId(session.sessionName, captureOpts);
         if (threadId) {
           this.sessionRegistry.updateResumeToken(session.sessionId, "codex_id", threadId, "scrape");
+        }
+        continue;
+      }
+
+      if (session.runtime === "antigravity") {
+        // A fresh agy launch has no conversation until its first message; fill
+        // the null slot from the seat's own launch log once agy records one.
+        if (!session.resumeToken) {
+          const id = this.antigravityConversationReader?.readConversationId(session.sessionName) ?? null;
+          if (id) this.sessionRegistry.updateResumeToken(session.sessionId, "antigravity_id", id, "scrape");
         }
         continue;
       }

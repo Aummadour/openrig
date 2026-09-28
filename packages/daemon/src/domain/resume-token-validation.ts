@@ -1,3 +1,4 @@
+import { ANTIGRAVITY_CONVERSATION_ID_RE } from "../adapters/antigravity-protocol.js";
 // OPR.0.4.0.22 FR-2 — per-runtime resume-token validation.
 // OPR.0.4.6.PI1 FR-6 — validation is PER-RESUME-TYPE: id-shaped tokens
 // (claude/codex) keep the original rules unchanged; pi_session_file is a
@@ -10,7 +11,7 @@
 // actually resume" probe is intentionally out of scope (heavy + must not
 // mutate live state); format validation is the safe, side-effect-free floor.
 
-export type ResumeType = "claude_id" | "codex_id" | "pi_session_file";
+export type ResumeType = "claude_id" | "codex_id" | "pi_session_file" | "antigravity_id";
 
 export interface ResumeTokenValidationOk {
   ok: true;
@@ -50,6 +51,7 @@ export function resumeTypeForRuntime(runtime: string | null): ResumeType | null 
   if (runtime === "claude-code") return "claude_id";
   if (runtime === "codex") return "codex_id";
   if (runtime === "pi") return "pi_session_file";
+  if (runtime === "antigravity") return "antigravity_id";
   return null;
 }
 
@@ -96,7 +98,7 @@ export function validateResumeToken(
   if (!resumeType) {
     return {
       ok: false,
-      error: `set-resume-token is not supported for runtime "${runtime ?? "unknown"}" (only claude-code, codex, and pi have resume tokens).`,
+      error: `set-resume-token is not supported for runtime "${runtime ?? "unknown"}" (only claude-code, codex, pi, and antigravity have resume tokens).`,
     };
   }
   if (typeof rawToken !== "string") {
@@ -105,6 +107,11 @@ export function validateResumeToken(
   const token = rawToken.trim();
   if (token.length === 0) {
     return { ok: false, error: "Resume token is empty." };
+  }
+  if (resumeType === "antigravity_id") {
+    return ANTIGRAVITY_CONVERSATION_ID_RE.test(token)
+      ? { ok: true, resumeType, token }
+      : { ok: false, error: "Antigravity resume token must be a lowercase conversation UUID." };
   }
   if (resumeType === "pi_session_file") {
     return validatePiSessionFileToken(token);

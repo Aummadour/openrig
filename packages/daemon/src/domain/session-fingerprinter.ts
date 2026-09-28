@@ -23,6 +23,7 @@ const SHELL_NAMES = new Set(["bash", "zsh", "fish", "sh", "dash", "tcsh", "csh"]
 
 const CLAUDE_PROCESS_PATTERNS = ["claude", "claude-code"];
 const CODEX_PROCESS_PATTERNS = ["codex"];
+const ANTIGRAVITY_PROCESS_NAMES = new Set(["agy"]);
 
 const CLAUDE_PANE_PATTERNS = [
   { label: "Claude Code", test: (line: string) => /^\s*Claude Code\b/i.test(line) },
@@ -100,6 +101,12 @@ export class SessionFingerprinter {
           evidence.processSignal = { command: pane.activeCommand, matched: pattern };
           return { runtimeHint: "codex", confidence: "high", evidence };
         }
+      }
+
+      if (ANTIGRAVITY_PROCESS_NAMES.has(cmd)) {
+        evidence.layerUsed = 1;
+        evidence.processSignal = { command: pane.activeCommand, matched: "agy" };
+        return { runtimeHint: "antigravity", confidence: "high", evidence };
       }
 
       if (SHELL_NAMES.has(cmd)) {

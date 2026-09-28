@@ -1,6 +1,5 @@
 import nodePath from "node:path";
-import os from "node:os";
-import fs from "node:fs";
+import { randomUUID } from "node:crypto";
 import type { TmuxAdapter } from "./tmux.js";
 import type {
   RuntimeAdapter,
@@ -16,6 +15,16 @@ import type {
 import type { ProjectionPlan, ProjectionEntry } from "../domain/projection-planner.js";
 import { shellQuote } from "./shell-quote.js";
 import { mergeManagedBlock } from "../domain/managed-blocks.js";
+import {
+  ANTIGRAVITY_CONVERSATION_ID_RE,
+  antigravitySeatPaths,
+  buildAgyCommand,
+  classifyAgyPane,
+  conversationForLaunch,
+  parseAgyLog,
+  parseLaunchState,
+  type AntigravityLaunchState,
+} from "./antigravity-protocol.js";
 
 export interface AntigravityAdapterFsOps {
   readFile(path: string): string;
@@ -30,12 +39,12 @@ export interface AntigravityAdapterFsOps {
   homedir?: string;
 }
 
-const SHELL_COMMANDS = new Set(["bash", "fish", "nu", "sh", "tmux", "zsh"]);
-
 /**
  * Antigravity CLI runtime adapter.
  * Projects resources into .agents/ and merges guidance into AGENTS.md.
  * Launches, resumes, and checks readiness for Google Antigravity (`agy`).
+ * Conversation identity comes from each launch's own --log-file (see
+ * antigravity-protocol.ts), never from the shared ~/.gemini data directory.
  */
 export class AntigravityRuntimeAdapter implements RuntimeAdapter {
   readonly runtime = "antigravity";
@@ -43,22 +52,30 @@ export class AntigravityRuntimeAdapter implements RuntimeAdapter {
   private fs: AntigravityAdapterFsOps;
   private sleep: (ms: number) => Promise<void>;
   private launchPath?: string;
-  private geminiHome: string;
+  private stateRoot: string;
+  private newLaunchId: () => string;
+  private pollMs: number;
+  private maxWaitMs: number;
 
   constructor(deps: {
     tmux: TmuxAdapter;
     fsOps: AntigravityAdapterFsOps;
     sleep?: (ms: number) => Promise<void>;
     launchPath?: string;
-    geminiHome?: string;
+    /** Seat state root: <OPENRIG_HOME>/state/antigravity. */
+    stateRoot: string;
+    newLaunchId?: () => string;
+    pollMs?: number;
+    maxWaitMs?: number;
   }) {
     this.tmux = deps.tmux;
     this.fs = deps.fsOps;
     this.sleep = deps.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
     this.launchPath = deps.launchPath;
-    this.geminiHome =
-      deps.geminiHome ??
-      nodePath.join(this.fs.homedir ?? os.homedir(), ".gemini", "antigravity-cli");
+    this.stateRoot = deps.stateRoot;
+    this.newLaunchId = deps.newLaunchId ?? (() => randomUUID());
+    this.pollMs = deps.pollMs ?? 500;
+    this.maxWaitMs = deps.maxWaitMs ?? 30_000;
   }
 
   async listInstalled(binding: NodeBinding): Promise<InstalledResource[]> {
@@ -189,49 +206,128 @@ export class AntigravityRuntimeAdapter implements RuntimeAdapter {
     if (opts.resumeToken && opts.forkSource) {
       return { ok: false, error: "resumeToken and forkSource are mutually exclusive — pick one" };
     }
-
-    const model = binding.model?.trim();
-    const modelArg = model ? ` --model ${shellQuote(model)}` : "";
-    const postureArg = " --dangerously-skip-permissions --mode accept-edits";
-
-    let cmd: string;
-    if (opts.resumeToken) {
-      cmd = `agy${postureArg}${modelArg} --conversation ${shellQuote(opts.resumeToken)}`;
-    } else {
-      cmd = `agy${postureArg}${modelArg}`;
+    if (opts.resumeToken && !ANTIGRAVITY_CONVERSATION_ID_RE.test(opts.resumeToken)) {
+      return { ok: false, error: "Antigravity resume token is not a conversation id", recovery: "retry_fresh" };
     }
 
+    const seat = antigravitySeatPaths(this.stateRoot, binding.tmuxSession);
+    this.fs.mkdirp(seat.seatRoot);
+    const launchId = this.newLaunchId();
+    const state: AntigravityLaunchState = {
+      launchId,
+      logFile: seat.logPath(launchId),
+      launchedAt: new Date().toISOString(),
+      requestedModel: binding.model?.trim() || null,
+      requestedConversation: opts.resumeToken ?? null,
+    };
+    this.fs.writeFile(seat.launchStatePath, JSON.stringify(state));
+
+    const cmd = buildAgyCommand({ model: binding.model, logFile: state.logFile, resumeToken: opts.resumeToken });
     const fullCmd = this.launchPath ? `env PATH=${shellQuote(this.launchPath)} ${cmd}` : cmd;
     const textResult = await this.tmux.sendShellCommand(binding.tmuxSession, fullCmd);
     if (!textResult.ok) {
       return { ok: false, error: `Failed to send launch command: ${textResult.message}` };
     }
 
-    if (opts.resumeToken) {
-      return {
-        ok: true,
-        resumeToken: opts.resumeToken,
-        resumeType: "antigravity_id",
-        appliedLaunch: { runtime: "antigravity", axis: "permission", state: "observed", value: "bypassPermissions" },
-      };
-    }
+    return this.waitForLaunch(binding.tmuxSession, state);
+  }
 
-    // Capture fresh conversation ID
-    await this.sleep(1500);
-    const conversationId = await this.captureLatestConversationId();
-    if (conversationId) {
-      return {
-        ok: true,
-        resumeToken: conversationId,
-        resumeType: "antigravity_id",
-        appliedLaunch: { runtime: "antigravity", axis: "permission", state: "observed", value: "bypassPermissions" },
-      };
+  /**
+   * Wait until this launch is interactive and its identity is proven from its
+   * own log. A fresh launch has no conversation until the first message; its
+   * id is read later by readConversationId().
+   */
+  private async waitForLaunch(session: string, state: AntigravityLaunchState): Promise<HarnessLaunchResult> {
+    const appliedLaunch = { runtime: "antigravity", axis: "permission", state: "observed", value: "bypassPermissions" } as const;
+    const attempts = Math.max(1, Math.ceil(this.maxWaitMs / this.pollMs));
+    let trustAnswered = false;
+    let lastPane = "";
+
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      const facts = this.readLogFacts(state.logFile);
+      if (facts.rejectedModel) {
+        await this.stopAgy(session);
+        return {
+          ok: false,
+          error: `agy rejected model ${facts.rejectedModel}; it would silently fall back to its default model`,
+          recovery: "attention_required",
+        };
+      }
+      if (state.requestedConversation && facts.missing) {
+        await this.stopAgy(session);
+        return {
+          ok: false,
+          error: "Antigravity conversation not found; agy would silently start a fresh conversation",
+          recovery: "retry_fresh",
+        };
+      }
+
+      const paneCommand = await this.tmux.getPaneCommand(session);
+      lastPane = (await this.tmux.capturePaneContent(session, 40)) ?? "";
+      const pane = classifyAgyPane(lastPane, paneCommand);
+      if (pane.kind === "shell" && attempt > 0) {
+        return {
+          ok: false,
+          error: "agy exited during startup",
+          recovery: "attention_required",
+          evidence: lastPane.split("\n").slice(-12).join("\n"),
+        };
+      }
+      if (pane.kind === "trust_prompt" && !trustAnswered) {
+        // The seat already runs with --dangerously-skip-permissions; the folder
+        // trust dialog is agy's own record of that choice (first option = trust).
+        await this.tmux.sendKeys(session, ["Enter"]);
+        trustAnswered = true;
+      } else if (pane.kind === "ready") {
+        if (!state.requestedConversation) return { ok: true, appliedLaunch };
+        if (facts.resumed === state.requestedConversation) {
+          return { ok: true, resumeToken: facts.resumed, resumeType: "antigravity_id", appliedLaunch };
+        }
+      }
+      if (attempt < attempts - 1) await this.sleep(this.pollMs);
     }
 
     return {
-      ok: true,
-      appliedLaunch: { runtime: "antigravity", axis: "permission", state: "observed", value: "bypassPermissions" },
+      ok: false,
+      error: state.requestedConversation
+        ? "timed out waiting for agy to confirm the requested conversation"
+        : "timed out waiting for agy to become interactive",
+      recovery: "attention_required",
+      evidence: lastPane.split("\n").slice(-12).join("\n"),
     };
+  }
+
+  /**
+   * The conversation bound to the seat's CURRENT launch, read from that
+   * launch's own log. Null until agy records one (fresh launches: after the
+   * first message).
+   */
+  readConversationId(sessionName: string): string | null {
+    const seat = antigravitySeatPaths(this.stateRoot, sessionName);
+    if (!this.fs.exists(seat.launchStatePath)) return null;
+    let state: AntigravityLaunchState | null;
+    try {
+      state = parseLaunchState(this.fs.readFile(seat.launchStatePath));
+    } catch {
+      return null;
+    }
+    if (!state) return null;
+    return conversationForLaunch(state, this.readLogFacts(state.logFile));
+  }
+
+  private readLogFacts(logFile: string) {
+    if (!this.fs.exists(logFile)) return parseAgyLog("");
+    try {
+      return parseAgyLog(this.fs.readFile(logFile));
+    } catch {
+      return parseAgyLog("");
+    }
+  }
+
+  private async stopAgy(session: string): Promise<void> {
+    await this.tmux.sendKeys(session, ["C-c"]);
+    await this.sleep(this.pollMs);
+    await this.tmux.sendKeys(session, ["C-c"]);
   }
 
   async checkReady(binding: NodeBinding): Promise<ReadinessResult> {
@@ -245,44 +341,10 @@ export class AntigravityRuntimeAdapter implements RuntimeAdapter {
 
     const paneCommand = await this.tmux.getPaneCommand(binding.tmuxSession);
     const paneContent = (await this.tmux.capturePaneContent(binding.tmuxSession, 40)) ?? "";
-
-    if (paneCommand && SHELL_COMMANDS.has(paneCommand)) {
-      return { ready: false, reason: "Pane returned to shell instead of running agy" };
-    }
-
-    if (paneContent.includes("Welcome to Antigravity") || paneContent.includes("Type / for commands") || paneCommand?.includes("agy")) {
-      return { ready: true };
-    }
-
-    // Default to ready if process is running and not in shell
-    return { ready: true };
-  }
-
-  private async captureLatestConversationId(): Promise<string | undefined> {
-    try {
-      const brainDir = nodePath.join(this.geminiHome, "brain");
-      if (!this.fs.exists(brainDir) || !this.fs.readdir) return undefined;
-      const entries = this.fs.readdir(brainDir);
-      let newestId: string | undefined;
-      let newestTime = 0;
-      for (const entry of entries) {
-        if (entry.startsWith(".")) continue;
-        const entryPath = nodePath.join(brainDir, entry);
-        if (this.fs.statMode) {
-          try {
-            const stat = fs.statSync(entryPath);
-            if (stat.isDirectory() && stat.mtimeMs > newestTime) {
-              newestTime = stat.mtimeMs;
-              newestId = entry;
-            }
-          } catch {
-            // Ignore unreadable entries
-          }
-        }
-      }
-      return newestId;
-    } catch {
-      return undefined;
-    }
+    const pane = classifyAgyPane(paneContent, paneCommand);
+    if (pane.kind === "ready") return { ready: true };
+    if (pane.kind === "shell") return { ready: false, reason: "Pane returned to shell instead of running agy" };
+    if (pane.kind === "trust_prompt") return { ready: false, reason: "agy is waiting at its folder trust dialog" };
+    return { ready: false, reason: "agy has not shown its prompt yet" };
   }
 }

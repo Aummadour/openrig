@@ -218,18 +218,14 @@ export function assessNativeResumeProbe(
   }
 
   if (runtime === "antigravity") {
-    if (paneContent.includes("No conversation found") || paneContent.includes("conversation not found")) {
+    // agy 1.2.12 starts a fresh conversation without any pane message when the
+    // requested id is unknown, so a live agy pane proves nothing about the
+    // conversation. Identity is proven only by the launch log (adapter/resume).
+    if (paneCommand.includes("agy")) {
       return {
-        status: "failed",
-        code: "no_conversation_found",
-        detail: "Antigravity reported that the requested conversation does not exist.",
-      };
-    }
-    if (paneContent.includes("Welcome to Antigravity") || paneContent.includes("Type / for commands") || paneCommand.includes("agy")) {
-      return {
-        status: "resumed",
-        code: "active_runtime",
-        detail: "Antigravity is the active foreground process in the probe pane.",
+        status: "inconclusive",
+        code: "identity_not_observable",
+        detail: "Antigravity is running, but the pane cannot show which conversation it resumed.",
       };
     }
     if (SHELL_COMMANDS.has(paneCommand)) {

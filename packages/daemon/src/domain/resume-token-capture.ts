@@ -31,6 +31,10 @@ export interface ResumeTokenCaptureDeps {
   piRunnerStateStore?: {
     readSessionFile(sessionName: string): { ok: true; sessionFile: string } | { ok: false; reason: string };
   } | null;
+  /** Reads the conversation id from the seat's current agy launch log. */
+  antigravityConversationReader?: {
+    readConversationId(sessionName: string): string | null;
+  } | null;
 }
 
 export type ResumeTokenDeriveResult =
@@ -48,6 +52,7 @@ export type ResumeTokenDeriveResult =
  *   claude-code → the status-line sidecar's session_id (a file read)
  *   codex       → the thread id derived from live pid-keyed logs
  *   pi          → the pi-runner state sidecar's sessionFile (a file read)
+ *   antigravity → the conversation id in the seat's current launch log
  * Returns a structured outcome; never throws for a missing/invalid token
  * (those are honest skips). ANY unexpected throw from a dependency is the
  * caller's to swallow (capture must never fail or block its lifecycle op).
@@ -83,6 +88,11 @@ export async function deriveResumeToken(
     }
     if (state.sessionFile.trim().length > 0) token = state.sessionFile.trim();
     else return { outcome: "skipped", reason: "missing_sidecar" };
+  } else if (runtime === "antigravity") {
+    if (!deps.antigravityConversationReader) return { outcome: "noop" };
+    const id = deps.antigravityConversationReader.readConversationId(input.sessionName);
+    if (!id) return { outcome: "skipped", reason: "missing_sidecar" };
+    token = id;
   } else {
     return { outcome: "noop" }; // resumeType set but runtime is not one we derive — defensive
   }

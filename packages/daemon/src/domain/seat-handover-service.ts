@@ -136,6 +136,7 @@ interface SeatHandoverServiceDeps {
   resumeTokenCapturer?: ResumeTokenCaptureDeps["resumeTokenCapturer"];
   /** OPR.0.4.6.PI1 FR-6 — pi-runner sidecar reader for Pi resume-token capture. */
   piRunnerStateStore?: ResumeTokenCaptureDeps["piRunnerStateStore"];
+  antigravityConversationReader?: ResumeTokenCaptureDeps["antigravityConversationReader"];
   /** Readiness timeout for the successor launch (tests shorten it). */
   readinessTimeoutMs?: number;
   /** Injectable sleep for the successor readiness backoff (tests). */
@@ -246,6 +247,7 @@ export class SeatHandoverService {
       contextUsageStore: deps.contextUsageStore ?? null,
       resumeTokenCapturer: deps.resumeTokenCapturer ?? null,
       piRunnerStateStore: deps.piRunnerStateStore ?? null,
+      antigravityConversationReader: deps.antigravityConversationReader ?? null,
     };
   }
 
