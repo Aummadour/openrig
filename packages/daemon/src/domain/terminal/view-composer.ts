@@ -57,6 +57,10 @@ export interface ViewMemberInput {
 export interface ComposeContext {
   /** Resolve a host id to its registry entry, or null if the id is unknown. */
   resolveHost(id: string): HostEntry | null;
+  /** The daemon's TMUX_TMPDIR, when its seats live on a non-default tmux
+   *  server. Local attaches carry it so a provider pane (herdr, cmux), which
+   *  does not inherit the daemon's environment, reaches the same server. */
+  tmuxTmpdir?: string;
 }
 
 /** POSIX single-quote a string so session names / targets are shell-inert in the composed command. */
@@ -176,7 +180,7 @@ export function composeView(
     opened.push({
       seat: m.seat,
       label: m.label,
-      paneCommand: `tmux attach ${attachFlag}-t ${shellQuote(m.tmuxSession)}`,
+      paneCommand: `${ctx.tmuxTmpdir ? `env TMUX_TMPDIR=${shellQuote(ctx.tmuxTmpdir)} ` : ""}tmux attach ${attachFlag}-t ${shellQuote(m.tmuxSession)}`,
       readOnly: m.readOnly,
     });
   }

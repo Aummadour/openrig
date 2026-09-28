@@ -165,7 +165,7 @@ export class TerminalService {
     if (!view) return { code: "view_required", error: "a view argument is required" };
     const resolved = await this.resolveView(view);
     if ("code" in resolved) return resolved;
-    return composeView(resolved.id, await this.refineLiveness(resolved.members), { resolveHost: (id) => this.deps.resolveHost(id) });
+    return composeView(resolved.id, await this.refineLiveness(resolved.members), { resolveHost: (id) => this.deps.resolveHost(id), tmuxTmpdir: process.env.TMUX_TMPDIR || undefined });
   }
 
   private planId(provider: string, composed: ComposedView): string {
@@ -197,7 +197,7 @@ export class TerminalService {
       const inventory = await this.deps.listRigSeatsBatch?.(result.rigs);
       for (const entry of entries) {
         const rows = entry.kind === "derived" ? inventory?.get(entry.name) : undefined;
-        const plan = rows ? composeView(entry.view, await this.refineLiveness(deriveViewMembers(rows, { readOnly: false })), { resolveHost: id => this.deps.resolveHost(id) })
+        const plan = rows ? composeView(entry.view, await this.refineLiveness(deriveViewMembers(rows, { readOnly: false })), { resolveHost: id => this.deps.resolveHost(id), tmuxTmpdir: process.env.TMUX_TMPDIR || undefined })
           : await this.resolveComposed(entry.view);
         if ("code" in plan) continue;
         result.catalog.push({ ...entry, members: [...plan.opened, ...plan.absent, ...plan.degraded].map((m) => m.seat), ready: plan.opened.length, absent: plan.absent.length, degraded: plan.degraded.length, pages: plan.pages.length });
